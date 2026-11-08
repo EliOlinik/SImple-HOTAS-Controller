@@ -110,6 +110,40 @@ public sealed class PresetPlannerTests
     }
 
     [Fact]
+    public void Match_VidPidFallback_NeverCrossesFromUsbToBluetooth()
+    {
+        // Same model, different connection: the wired entry must not latch onto the Bluetooth controller.
+        var bluetooth = Ctl(@"BTHENUM\{00001124}_VID&0002054C_PID&0CE6\7&1&AABBCCDDEEFF", 0x054C, 0x0CE6);
+        var match = PresetPlanner.Match(P(Entry(@"USB\VID_054C&PID_0CE6\SN0001", 0x054C, 0x0CE6, true)), new[] { bluetooth });
+
+        Assert.Null(Assert.Single(match).Controller);
+    }
+
+    [Fact]
+    public void Match_VidPidFallback_StillWorksWithinBluetooth()
+    {
+        var moved = Ctl(@"BTHENUM\{00001124}_VID&0002054C_PID&0CE6\7&1&112233445566", 0x054C, 0x0CE6);
+        var match = PresetPlanner.Match(
+            P(Entry(@"BTHENUM\{00001124}_VID&0002054C_PID&0CE6\7&1&AABBCCDDEEFF", 0x054C, 0x0CE6, true)), new[] { moved });
+
+        Assert.Same(moved, Assert.Single(match).Controller);
+    }
+
+    [Fact]
+    public void Match_WiredAndBluetoothEntries_EachMatchTheirOwnConnection()
+    {
+        var wired = Ctl(@"USB\VID_054C&PID_0CE6\SN0001", 0x054C, 0x0CE6);
+        var bluetooth = Ctl(@"BTHENUM\{00001124}_VID&0002054C_PID&0CE6\7&1&AABBCCDDEEFF", 0x054C, 0x0CE6);
+        var match = PresetPlanner.Match(
+            P(Entry(@"USB\VID_054C&PID_0CE6\SN0001", 0x054C, 0x0CE6, false),
+              Entry(@"BTHENUM\{00001124}_VID&0002054C_PID&0CE6\7&1&AABBCCDDEEFF", 0x054C, 0x0CE6, true)),
+            new[] { bluetooth, wired });
+
+        Assert.Same(wired, match[0].Controller);
+        Assert.Same(bluetooth, match[1].Controller);
+    }
+
+    [Fact]
     public void Match_NoVidPid_NoFallback()
     {
         var c = Ctl(@"USB\A\NEW", 1, 2);

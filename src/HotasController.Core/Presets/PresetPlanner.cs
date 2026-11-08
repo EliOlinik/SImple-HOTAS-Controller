@@ -79,9 +79,13 @@ public static class PresetPlanner
             var entry = preset.Entries[i];
             if (entry.VendorId is null || entry.ProductId is null) continue;
 
+            // Only within the same connection type: a wired controller's entry must never latch onto the
+            // Bluetooth connection of the same model (or the other way round), they are separate devices.
             var sameEntries = Enumerable.Range(0, preset.Entries.Count).Count(j =>
-                matched[j] is null && SameVidPid(preset.Entries[j], entry));
-            var candidates = controllers.Where(c => !claimed.Contains(c) && SameVidPid(c, entry)).ToList();
+                matched[j] is null && SameVidPid(preset.Entries[j], entry) && SameBus(preset.Entries[j].PhysicalDeviceInstanceId, entry.PhysicalDeviceInstanceId));
+            var candidates = controllers
+                .Where(c => !claimed.Contains(c) && SameVidPid(c, entry) && SameBus(c.PhysicalDeviceInstanceId, entry.PhysicalDeviceInstanceId))
+                .ToList();
             if (sameEntries != 1 || candidates.Count != 1) continue;
 
             matched[i] = candidates[0];
@@ -143,6 +147,9 @@ public static class PresetPlanner
 
     private static PresetEntry ToEntry(GameController c) =>
         new(c.PhysicalDeviceInstanceId, c.Name, c.VendorId, c.ProductId, c.IsEnabled);
+
+    private static bool SameBus(string a, string b) =>
+        string.Equals(InstanceIdParser.GetBus(a), InstanceIdParser.GetBus(b), StringComparison.OrdinalIgnoreCase);
 
     private static bool SameVidPid(PresetEntry e, PresetEntry other) =>
         e.VendorId == other.VendorId && e.ProductId == other.ProductId;

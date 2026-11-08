@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using HotasController.Core;
 using HotasController.Core.Abstractions;
 using HotasController.Core.Models;
 using HotasController.Core.Presets;
@@ -46,6 +47,14 @@ public partial class ControllerViewModel : ObservableObject
     public bool IsPlannedChange { get; init; }
 
     public bool IsUnplugged => Controller is null;
+
+    /// <summary>True for controllers connected over Bluetooth (also for an unplugged preset entry that was one).</summary>
+    public bool IsBluetooth => InstanceIdParser.IsBluetooth(DeviceId);
+
+    /// <summary>True for controllers connected over USB (also for an unplugged preset entry that was one).</summary>
+    public bool IsUsb => InstanceIdParser.IsUsb(DeviceId);
+
+    private string DeviceId => Controller?.PhysicalDeviceInstanceId ?? _unpluggedEntry!.PhysicalDeviceInstanceId;
     public string Name => Controller?.Name ?? _unpluggedEntry!.Name;
 
     public string VidPid

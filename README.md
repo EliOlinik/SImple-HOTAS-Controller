@@ -12,6 +12,7 @@ I have twitchy pots on some of my controllers, which causes several issues while
 - Untick the checkbox next to a controller to switch it off, and tick it to switch it back on. The change happens immediately.
 - **Re-enable all** turns back on every listed controller that is not fully enabled, including ones this app disabled earlier.
 - The status dot shows each controller's state: green is enabled, red is disabled, yellow means the app is working on it, and grey means unplugged.
+- A small icon next to a controller's name shows how it is connected: a USB symbol for USB, or a blue Bluetooth symbol for Bluetooth.
 - The list refreshes automatically when you plug in or unplug a controller.
 
 ### Presets
@@ -24,7 +25,7 @@ A preset is a named set of controller states, for example "Racing" with the HOTA
 - **Update** overwrites the selected preset with the current states, after asking you to confirm. It also adds controllers that are new and keeps the entries for controllers that are unplugged.
 - **Delete** removes the selected preset, after asking you to confirm.
 - When a preset is selected, controllers it contains that are not plugged in appear greyed out as **Unplugged**, with a disabled checkbox. They are skipped when you apply the preset. Press **Forget** on such a row to remove that controller from the selected preset (after confirmation), for example when you no longer own it. Other presets are not affected.
-- A controller is matched to a preset entry by its device ID. If you move it to another USB port, it is matched by VID:PID instead, as long as that is unambiguous (two identical sticks are never mixed up).
+- A controller is matched to a preset entry by its device ID. If you move it to another USB port, it is matched by VID:PID instead, as long as that is unambiguous (two identical sticks are never mixed up) and the connection type is the same. A controller connected by cable and the same model connected over Bluetooth are separate Windows devices, so each gets its own row and its own preset entry.
 
 ## Requirements
 
