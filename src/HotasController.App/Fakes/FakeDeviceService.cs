@@ -12,6 +12,7 @@ public sealed class FakeDeviceService : IDeviceService
         Make("USB\\VID_0738&PID_2221\\FAKE1", "Saitek Pro Flight X-56 Rhino Stick", 0x0738, 0x2221, 2),
         Make("USB\\VID_0738&PID_A221\\FAKE2", "Saitek Pro Flight X-56 Rhino Throttle", 0x0738, 0xA221, 2),
         Make("USB\\VID_231D&PID_0200\\FAKE3", "VKB Gladiator NXT EVO", 0x231D, 0x0200, 1),
+        Make("BTHENUM\\{00001124-0000-1000-8000-00805F9B34FB}_VID&0002054C_PID&0CE6\\FAKE4", "DualSense Wireless Controller", 0x054C, 0x0CE6, 1),
     };
 
     public IReadOnlyList<GameController> GetGameControllers()

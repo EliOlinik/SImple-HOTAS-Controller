@@ -1,7 +1,7 @@
 ﻿<Window x:Class="HotasController.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="HOTAS Controller" Height="480" Width="840" MinWidth="800" MinHeight="340">
+        Title="HOTAS Controller" Height="480" Width="790" MinWidth="760" MinHeight="340">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
         <Style x:Key="StatusDot" TargetType="Ellipse">
@@ -80,18 +80,25 @@
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
-                            <GridViewColumn Header="Name" Width="230" DisplayMemberBinding="{Binding Name}"/>
-                            <GridViewColumn Header="VID:PID" Width="80" DisplayMemberBinding="{Binding VidPid}"/>
-                            <GridViewColumn Header="Nodes" Width="50" DisplayMemberBinding="{Binding NodeCountText}"/>
-                            <GridViewColumn Header="" Width="70">
+                            <GridViewColumn Header="Name" Width="230">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Content="Forget" Padding="10,1" Command="{Binding ForgetCommand}"
-                                                ToolTip="Remove this controller from the selected preset"
-                                                Visibility="{Binding IsUnplugged, Converter={StaticResource BoolToVisibility}}"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <!-- Bluetooth glyph from the system icon font (Segoe MDL2 Assets / Segoe Fluent Icons). -->
+                                            <TextBlock Text="&#xE702;" FontFamily="Segoe MDL2 Assets" Foreground="#2D7FF9"
+                                                       VerticalAlignment="Center" Margin="0,0,6,0" ToolTip="Connected over Bluetooth"
+                                                       Visibility="{Binding IsBluetooth, Converter={StaticResource BoolToVisibility}}"/>
+                                            <!-- USB glyph; no explicit colour so it follows the row (greyed when unplugged). -->
+                                            <TextBlock Text="&#xE88E;" FontFamily="Segoe MDL2 Assets"
+                                                       VerticalAlignment="Center" Margin="0,0,6,0" ToolTip="Connected over USB"
+                                                       Visibility="{Binding IsUsb, Converter={StaticResource BoolToVisibility}}"/>
+                                            <TextBlock Text="{Binding Name}"/>
+                                        </StackPanel>
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
+                            <GridViewColumn Header="VID:PID" Width="80" DisplayMemberBinding="{Binding VidPid}"/>
+                            <GridViewColumn Header="Nodes" Width="50" DisplayMemberBinding="{Binding NodeCountText}"/>
                             <GridViewColumn Header="Status" Width="130">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
@@ -102,7 +109,19 @@
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
-                            <GridViewColumn Header="After apply" Width="150" DisplayMemberBinding="{Binding PlannedText}"/>
+                            <GridViewColumn Header="After apply" Width="200">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding PlannedText}" VerticalAlignment="Center"/>
+                                            <!-- Only on rows for unplugged controllers: drops the controller from the selected preset. -->
+                                            <Button Content="Forget" Padding="8,0" Margin="8,0,0,0" Command="{Binding ForgetCommand}"
+                                                    ToolTip="Remove this controller from the selected preset"
+                                                    Visibility="{Binding IsUnplugged, Converter={StaticResource BoolToVisibility}}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
                         </GridView>
                     </ListView.View>
                 </ListView>
