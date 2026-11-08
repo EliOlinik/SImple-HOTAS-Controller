@@ -65,13 +65,17 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSelectedPresetNameChanged(string? value) => RebuildRows();
 
+    /// <summary>The selected saved preset; null when the built-in &lt;Default&gt; placeholder (or nothing) is selected.</summary>
     private Preset? SelectedPreset =>
-        SelectedPresetName is { } n
+        SelectedPresetName is { } n && !PresetNaming.IsDefaultLabel(n)
             ? _presets.FirstOrDefault(p => string.Equals(p.Name, n, StringComparison.OrdinalIgnoreCase))
             : null;
 
     private bool CanRefresh() => !IsBusy;
     private bool CanUsePreset() => !IsBusy && SelectedPreset is not null;
+
+    /// <summary>Apply is only offered when it would actually change something.</summary>
+    private bool CanApply() => CanUsePreset() && _pendingChanges > 0;
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private void Refresh()
@@ -97,18 +101,58 @@ public partial class MainViewModel : ObservableObject
     private void RebuildRows()
     {
         Controllers.Clear();
-        foreach (var c in _lastControllers)
-            Controllers.Add(new ControllerViewModel(c, _safety, _toggler, this));
 
         if (SelectedPreset is { } preset)
         {
-            foreach (var item in PresetPlanner.Plan(preset, _lastControllers).Where(i => i.Kind == PresetPlanKind.Unplugged))
-                Controllers.Add(new ControllerViewModel(item.Entry, _safety, _toggler, this));
+            // Preview what Apply would do, so the user can see it before pressing the button.
+            var preview = PresetPlanner.Preview(preset, _lastControllers);
+            var plannedByController = new Dictionary<GameController, PresetPlanKind>(ReferenceEqualityComparer.Instance);
+            foreach (var item in preview.Items)
+                if (item.Controller is { } matched) plannedByController[matched] = item.Kind;
+
+            foreach (var c in _lastControllers)
+            {
+                var kind = plannedByController.TryGetValue(c, out var k) ? k : (PresetPlanKind?)null;
+                Controllers.Add(new ControllerViewModel(c, _safety, _toggler, this)
+                {
+                    PlannedText = kind switch
+                    {
+                        PresetPlanKind.Enable => "→ Enable",
+                        PresetPlanKind.Disable => "→ Disable",
+                        PresetPlanKind.AlreadyCorrect => "No change",
+                        _ => "Not in preset",
+                    },
+                    IsPlannedChange = kind is PresetPlanKind.Enable or PresetPlanKind.Disable,
+                });
+            }
+
+            foreach (var item in preview.Items.Where(i => i.Kind == PresetPlanKind.Unplugged))
+                Controllers.Add(new ControllerViewModel(item.Entry, _safety, _toggler, this) { PlannedText = "Skipped (unplugged)" });
+
+            PresetSummary = preview.Summary;
+            _pendingChanges = preview.Changes;
+        }
+        else
+        {
+            foreach (var c in _lastControllers)
+                Controllers.Add(new ControllerViewModel(c, _safety, _toggler, this));
+            PresetSummary = "";
+            _pendingChanges = 0;
         }
 
+        ApplyPresetCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasControllers));
         OnPropertyChanged(nameof(HasDisabledControllers));
     }
+
+    /// <summary>One-line preview of what Apply would do; empty when no saved preset is selected.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPresetSummary))]
+    private string _presetSummary = "";
+
+    public bool HasPresetSummary => PresetSummary.Length > 0;
+
+    private int _pendingChanges;
 
     /// <summary>Windows reported that devices came or went. Ignored while an operation runs (it reloads itself).</summary>
     public void OnDevicesChanged()
@@ -139,13 +183,14 @@ public partial class MainViewModel : ObservableObject
         // Read the wanted selection first: clearing the list makes the ComboBox reset SelectedPresetName to null.
         var keep = selectName ?? SelectedPresetName;
 
+        // The built-in placeholder is always first and is never stored.
         PresetNames.Clear();
+        PresetNames.Add(PresetNaming.DefaultLabel);
         foreach (var p in _presets.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
             PresetNames.Add(p.Name);
 
-        SelectedPresetName = keep is null
-            ? null
-            : PresetNames.FirstOrDefault(n => string.Equals(n, keep, StringComparison.OrdinalIgnoreCase));
+        SelectedPresetName = PresetNames.FirstOrDefault(n => string.Equals(n, keep, StringComparison.OrdinalIgnoreCase))
+                             ?? PresetNaming.DefaultLabel;
     }
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
@@ -158,6 +203,12 @@ public partial class MainViewModel : ObservableObject
         if (name.Length == 0)
         {
             StatusMessage = "A preset needs a name.";
+            return;
+        }
+
+        if (PresetNaming.IsDefaultLabel(name))
+        {
+            StatusMessage = $"\"{PresetNaming.DefaultLabel}\" is reserved for the built-in live state. Choose another name.";
             return;
         }
 
@@ -228,8 +279,7 @@ public partial class MainViewModel : ObservableObject
         try
         {
             _presetStore.Delete(preset.Name);
-            SelectedPresetName = null;
-            LoadPresets(selectName: null);
+            LoadPresets(selectName: PresetNaming.DefaultLabel);
             StatusMessage = $"Deleted preset \"{preset.Name}\".";
         }
         catch (Exception ex)
@@ -238,8 +288,33 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Removes an unplugged controller's entry from the selected preset, after confirmation.</summary>
+    internal void ForgetEntry(PresetEntry entry)
+    {
+        if (IsBusy || SelectedPreset is not { } preset) return;
+
+        if (!_confirm.Confirm("Forget controller",
+                $"Remove \"{entry.Name}\" from the preset \"{preset.Name}\"? Other presets are not affected."))
+        {
+            StatusMessage = "Cancelled.";
+            return;
+        }
+
+        try
+        {
+            _presetStore.Save(PresetPlanner.Forget(preset, entry));
+            LoadPresets(selectName: preset.Name);
+            RebuildRows(); // the selection did not change, so refresh the rows explicitly
+            StatusMessage = $"Removed \"{entry.Name}\" from the preset \"{preset.Name}\".";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Could not save the preset: {ex.Message}";
+        }
+    }
+
     /// <summary>Switches every plugged-in controller in the preset to its saved state. Controllers not in the preset are left alone.</summary>
-    [RelayCommand(CanExecute = nameof(CanUsePreset))]
+    [RelayCommand(CanExecute = nameof(CanApply))]
     private async Task ApplyPresetAsync()
     {
         if (SelectedPreset is not { } preset) return;

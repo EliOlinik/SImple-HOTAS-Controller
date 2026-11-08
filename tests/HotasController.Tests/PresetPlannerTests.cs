@@ -152,6 +152,33 @@ public sealed class PresetPlannerTests
     }
 
     [Fact]
+    public void Forget_RemovesOnlyThatEntry()
+    {
+        var keep = Entry(@"USB\A\1", 1, 1, true);
+        var gone = Entry(@"USB\GONE\1", 9, 9, false, "Throttle");
+        var result = PresetPlanner.Forget(new Preset("Race", new[] { keep, gone }), gone);
+
+        Assert.Equal("Race", result.Name);
+        Assert.Equal(keep, Assert.Single(result.Entries));
+    }
+
+    [Fact]
+    public void Forget_EntryNotPresent_LeavesPresetUnchanged()
+    {
+        var keep = Entry(@"USB\A\1", 1, 1, true);
+        var result = PresetPlanner.Forget(new Preset("Race", new[] { keep }), Entry(@"USB\OTHER\1", 2, 2, true));
+
+        Assert.Equal(keep, Assert.Single(result.Entries));
+    }
+
+    [Fact]
+    public void Forget_LastEntry_LeavesEmptyPreset()
+    {
+        var only = Entry(@"USB\GONE\1", 9, 9, true);
+        Assert.Empty(PresetPlanner.Forget(new Preset("Race", new[] { only }), only).Entries);
+    }
+
+    [Fact]
     public void Update_FollowsControllerToNewPort()
     {
         var existing = new Preset("Race", new[] { Entry(@"USB\A\OLD", 1, 1, true) });

@@ -20,6 +20,35 @@ public enum PresetPlanKind
 /// <summary>What applying a preset means for one entry. <see cref="Controller"/> is null when unplugged.</summary>
 public sealed record PresetPlanItem(PresetEntry Entry, GameController? Controller, PresetPlanKind Kind);
 
+/// <summary>What applying a preset would do: one item per preset entry, plus plugged-in controllers the preset does not mention.</summary>
+public sealed record PresetPreview(IReadOnlyList<PresetPlanItem> Items, IReadOnlyList<GameController> NotInPreset)
+{
+    public int ToEnable => Items.Count(i => i.Kind == PresetPlanKind.Enable);
+    public int ToDisable => Items.Count(i => i.Kind == PresetPlanKind.Disable);
+    public int AlreadyCorrect => Items.Count(i => i.Kind == PresetPlanKind.AlreadyCorrect);
+    public int Unplugged => Items.Count(i => i.Kind == PresetPlanKind.Unplugged);
+
+    /// <summary>Number of controllers Apply would actually switch.</summary>
+    public int Changes => ToEnable + ToDisable;
+
+    /// <summary>One line describing the outcome, e.g. "Apply will: enable 1, disable 2 · 1 already correct · 1 unplugged".</summary>
+    public string Summary
+    {
+        get
+        {
+            var changes = new List<string>();
+            if (ToEnable > 0) changes.Add($"enable {ToEnable}");
+            if (ToDisable > 0) changes.Add($"disable {ToDisable}");
+
+            var parts = new List<string> { changes.Count > 0 ? "Apply will: " + string.Join(", ", changes) : "Nothing to change" };
+            if (AlreadyCorrect > 0) parts.Add($"{AlreadyCorrect} already correct");
+            if (Unplugged > 0) parts.Add($"{Unplugged} unplugged");
+            if (NotInPreset.Count > 0) parts.Add($"{NotInPreset.Count} not in preset");
+            return string.Join(" · ", parts);
+        }
+    }
+}
+
 /// <summary>Pure logic for matching presets to plugged-in controllers, planning an apply, and capturing states.</summary>
 public static class PresetPlanner
 {
@@ -73,6 +102,15 @@ public static class PresetPlanner
             return new PresetPlanItem(entry, controller, kind);
         }).ToList();
 
+    /// <summary>The plan plus the plugged-in controllers that the preset does not mention (Apply leaves them alone).</summary>
+    public static PresetPreview Preview(Preset preset, IReadOnlyList<GameController> controllers)
+    {
+        var items = Plan(preset, controllers);
+        var matched = new HashSet<GameController>(
+            items.Where(i => i.Controller is not null).Select(i => i.Controller!), ReferenceEqualityComparer.Instance);
+        return new PresetPreview(items, controllers.Where(c => !matched.Contains(c)).ToList());
+    }
+
     /// <summary>A new preset holding the current state of every plugged-in controller.</summary>
     public static Preset Capture(string name, IReadOnlyList<GameController> controllers) =>
         new(name, controllers.Select(ToEntry).ToList());
@@ -92,6 +130,15 @@ public static class PresetPlanner
             .Concat(controllers.Where(c => !used.Contains(c)).Select(ToEntry))
             .ToList();
         return new Preset(existing.Name, entries);
+    }
+
+    /// <summary>The preset without the given entry (matched by value). Unchanged when the entry is not in it.</summary>
+    public static Preset Forget(Preset preset, PresetEntry entry)
+    {
+        var entries = preset.Entries.ToList();
+        var index = entries.IndexOf(entry);
+        if (index >= 0) entries.RemoveAt(index);
+        return new Preset(preset.Name, entries);
     }
 
     private static PresetEntry ToEntry(GameController c) =>

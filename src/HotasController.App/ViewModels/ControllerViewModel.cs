@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using HotasController.Core.Abstractions;
 using HotasController.Core.Models;
 using HotasController.Core.Presets;
@@ -37,6 +38,12 @@ public partial class ControllerViewModel : ObservableObject
 
     /// <summary>The plugged-in controller; null for an unplugged row.</summary>
     public GameController? Controller { get; }
+
+    /// <summary>What Apply would do to this row for the selected preset; empty when no saved preset is selected.</summary>
+    public string PlannedText { get; init; } = "";
+
+    /// <summary>True when Apply would switch this controller (the row is shown in bold).</summary>
+    public bool IsPlannedChange { get; init; }
 
     public bool IsUnplugged => Controller is null;
     public string Name => Controller?.Name ?? _unpluggedEntry!.Name;
@@ -91,8 +98,18 @@ public partial class ControllerViewModel : ObservableObject
         }
     }
 
-    /// <summary>Called by the owner when its busy state changes so the checkbox greys out.</summary>
-    public void OnOwnerBusyChanged() => OnPropertyChanged(nameof(CanInteract));
+    /// <summary>Called by the owner when its busy state changes so the checkbox and Forget button grey out.</summary>
+    public void OnOwnerBusyChanged()
+    {
+        OnPropertyChanged(nameof(CanInteract));
+        ForgetCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanForget() => _unpluggedEntry is not null && !_owner.IsBusy;
+
+    /// <summary>For an unplugged row: removes this controller from the selected preset.</summary>
+    [RelayCommand(CanExecute = nameof(CanForget))]
+    private void Forget() => _owner.ForgetEntry(_unpluggedEntry!);
 
     private async Task SetEnabledAsync(bool enable)
     {

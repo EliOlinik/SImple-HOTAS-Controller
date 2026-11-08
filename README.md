@@ -18,11 +18,12 @@ I have twitchy pots on some of my controllers, which causes several issues while
 
 A preset is a named set of controller states, for example "Racing" with the HOTAS off and the wheel on.
 
+- The dropdown always starts with **&lt;Default&gt;**, which is selected when the app starts. It is a built-in, read-only placeholder that shows the live state of your controllers. It cannot be applied, updated, deleted or used as a preset name, and it is not stored in `presets.json`. Deleting the selected preset switches back to it.
 - **Create** asks for a name and saves the current state of every plugged-in controller under it. Names must be unique, and at least one controller must be plugged in.
-- Pick a preset in the dropdown and press **Apply** to switch the controllers to the saved states. Controllers that are not in the preset are left alone, and the status bar reports how many were changed, already correct, unplugged or failed. Selecting a preset only previews it; nothing changes until you press **Apply**.
+- Pick a preset in the dropdown and press **Apply** to switch the controllers to the saved states. Controllers that are not in the preset are left alone, and the status bar reports how many were changed, already correct, unplugged or failed. Selecting a preset only previews it; nothing changes until you press **Apply**. The preview is a summary line below the preset controls (for example "Apply will: enable 1, disable 2 · 1 already correct · 1 unplugged") and an **After apply** column that says what will happen to each row: **→ Enable** or **→ Disable** (shown in bold), No change, Not in preset, or Skipped (unplugged). When there is nothing to change, **Apply** is greyed out.
 - **Update** overwrites the selected preset with the current states, after asking you to confirm. It also adds controllers that are new and keeps the entries for controllers that are unplugged.
 - **Delete** removes the selected preset, after asking you to confirm.
-- When a preset is selected, controllers it contains that are not plugged in appear greyed out as **Unplugged**, with a disabled checkbox. They are skipped when you apply the preset.
+- When a preset is selected, controllers it contains that are not plugged in appear greyed out as **Unplugged**, with a disabled checkbox. They are skipped when you apply the preset. Press **Forget** on such a row to remove that controller from the selected preset (after confirmation), for example when you no longer own it. Other presets are not affected.
 - A controller is matched to a preset entry by its device ID. If you move it to another USB port, it is matched by VID:PID instead, as long as that is unambiguous (two identical sticks are never mixed up).
 
 ## Requirements
