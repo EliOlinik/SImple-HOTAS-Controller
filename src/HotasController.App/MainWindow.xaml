@@ -1,7 +1,7 @@
 ﻿<Window x:Class="HotasController.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="HOTAS Controller" Height="420" Width="680" MinWidth="520" MinHeight="300">
+        Title="HOTAS Controller" Height="460" Width="760" MinWidth="720" MinHeight="320">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
         <Style x:Key="StatusDot" TargetType="Ellipse">
@@ -12,6 +12,9 @@
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsEnabled}" Value="True">
                     <Setter Property="Fill" Value="#27AE60"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsUnplugged}" Value="True">
+                    <Setter Property="Fill" Value="#95A5A6"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsWorking}" Value="True">
                     <Setter Property="Fill" Value="#F1C40F"/>
@@ -28,6 +31,7 @@
         <Grid Margin="12">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <DockPanel Margin="0,0,0,8">
@@ -38,13 +42,40 @@
                         Command="{Binding RefreshCommand}"/>
                 <TextBlock Text="Game controllers" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </DockPanel>
-            <Grid Grid.Row="1">
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="Preset:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox x:Name="PresetCombo" Width="200" Margin="0,0,10,0"
+                          ItemsSource="{Binding PresetNames}" SelectedItem="{Binding SelectedPresetName, Mode=TwoWay}"/>
+                <Button x:Name="ApplyPresetButton" Content="Apply" Padding="14,4" Margin="0,0,6,0" Command="{Binding ApplyPresetCommand}"/>
+                <Button x:Name="CreatePresetButton" Content="Create" Padding="14,4" Margin="0,0,6,0" Command="{Binding CreatePresetCommand}"/>
+                <Button x:Name="UpdatePresetButton" Content="Update" Padding="14,4" Margin="0,0,6,0" Command="{Binding UpdatePresetCommand}"/>
+                <Button x:Name="DeletePresetButton" Content="Delete" Padding="14,4" Command="{Binding DeletePresetCommand}"/>
+            </StackPanel>
+            <Grid Grid.Row="2">
                 <ListView x:Name="ControllerList" ItemsSource="{Binding Controllers}">
+                    <ListView.Resources>
+                        <!-- Greys out the text of rows for controllers that are not plugged in. -->
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsUnplugged}" Value="True">
+                                    <Setter Property="Foreground" Value="Gray"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListView.Resources>
                     <ListView.View>
                         <GridView>
-                            <GridViewColumn Header="Name" Width="260" DisplayMemberBinding="{Binding Name}"/>
+                            <GridViewColumn Header="On" Width="40">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" IsEnabled="{Binding CanInteract}"
+                                                  HorizontalAlignment="Center"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Name" Width="280" DisplayMemberBinding="{Binding Name}"/>
                             <GridViewColumn Header="VID:PID" Width="80" DisplayMemberBinding="{Binding VidPid}"/>
-                            <GridViewColumn Header="Nodes" Width="50" DisplayMemberBinding="{Binding NodeCount}"/>
+                            <GridViewColumn Header="Nodes" Width="50" DisplayMemberBinding="{Binding NodeCountText}"/>
                             <GridViewColumn Header="Status" Width="130">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
@@ -52,14 +83,6 @@
                                             <Ellipse Style="{StaticResource StatusDot}"/>
                                             <TextBlock Text="{Binding StatusText}"/>
                                         </StackPanel>
-                                    </DataTemplate>
-                                </GridViewColumn.CellTemplate>
-                            </GridViewColumn>
-                            <GridViewColumn Header="" Width="90">
-                                <GridViewColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Button Content="{Binding ToggleButtonText}" Padding="10,2" MinWidth="70"
-                                                Command="{Binding ToggleCommand}"/>
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>

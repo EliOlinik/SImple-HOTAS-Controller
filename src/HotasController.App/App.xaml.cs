@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using HotasController.App.Fakes;
 using HotasController.App.Services;
 using HotasController.App.ViewModels;
+using HotasController.Core.Presets;
 using HotasController.Core.Safety;
 using HotasController.Core.State;
 using HotasController.Win32;
@@ -96,17 +97,20 @@ public partial class App : Application
     public static MainViewModel CreateMainViewModel(bool useFakes = false)
     {
         var confirm = new MessageBoxConfirmationService();
+        var prompt = new DialogPromptService();
 
         if (useFakes)
         {
             var fakeDevices = new FakeDeviceService();
-            return new MainViewModel(fakeDevices, new FakeSafetyPolicy(), new FakeDeviceToggler(fakeDevices), confirm);
+            return new MainViewModel(fakeDevices, new FakeSafetyPolicy(), new FakeDeviceToggler(fakeDevices), confirm,
+                new InMemoryPresetStore(), prompt);
         }
 
         // One shared store instance: its lock only protects a single instance per file.
         var store = new DisabledStateStore(DisabledStateStore.DefaultPath);
         var devices = new DeviceService(store);
         var safety = new DeviceSafetyPolicy();
-        return new MainViewModel(devices, safety, new DeviceToggler(devices, safety, store), confirm);
+        return new MainViewModel(devices, safety, new DeviceToggler(devices, safety, store), confirm,
+            new PresetStore(PresetStore.DefaultPath), prompt);
     }
 }
