@@ -18,3 +18,11 @@ CM_Get_DevNode_Property
 SetupDiSetClassInstallParams
 SetupDiCallClassInstaller
 SP_PROPCHANGE_PARAMS
+CM_Get_Child
+CM_Get_Sibling
+RmStartSession
+RmEndSession
+RmRegisterResources
+RmGetList
+SetupDiCreateDeviceInfoList
+SetupDiOpenDeviceInfo

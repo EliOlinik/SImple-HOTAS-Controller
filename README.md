@@ -55,7 +55,7 @@ The result is written to the `dist` folder.
 The app performs two simple tasks:
 
 1. It scans the HID devices on the machine and keeps only game controllers (joystick, gamepad and multi-axis usages). Keyboards and mice are never listed.
-2. It enables or disables the selected controller through the Windows device-installation API (SetupAPI), the same mechanism Device Manager uses for its Enable/Disable device command. No drivers are changed or removed.
+2. It enables or disables the selected controller through the Windows device-installation API (SetupAPI), the same mechanism Device Manager uses for its Enable/Disable device command. No drivers are changed or removed. Besides the controller's input interfaces, the controller's other USB interfaces are switched too (for example a vendor "Bulk" interface that keeps the controller's light on, or a DualSense's audio interface), so a disabled controller is fully off. Those extra interfaces are best-effort: the input interfaces decide whether the change worked.
 
 Presets are just saved lists of controllers and their wanted states. Applying one runs the same enable or disable step, with the same safety checks, for each controller in turn.
 
@@ -65,7 +65,8 @@ The app checks the result after every change and reports a failure instead of as
 
 - A controller that the app disabled does not appear in the list while it is unplugged.
 - A controller disabled outside the app (for example in Device Manager) is not shown while it is disabled. A preset therefore shows it as **Unplugged** and cannot enable it.
-- If another program holds a controller open when it is disabled, Windows may mark the device as "restart required". The app reports this and refuses further changes to that device until Windows is restarted.
+- If another program holds a controller open when it is disabled, Windows may mark the device as "restart required". The app still tries the change and reports a failure only if the controller does not actually switch.
+- **Logitech/Saitek X-56 with the vendor driver:** disabling takes about 5 seconds, because the vendor driver is slow to stop, and it can fail while the Logitech DirectOutput service (`DirectOutputService.exe`) is running. If a disable fails, stop that service (for example `Stop-Service SaiDOutput` in an elevated PowerShell) and try again. This was observed on one machine with one driver version; with the generic Windows driver a disable takes a fraction of a second. After a disable, Windows may flag one of the controller's interfaces "restart required"; the next enable from the app clears it without a restart.
 
 ## Files the app creates
 

@@ -55,38 +55,64 @@ public sealed class DeviceToggler(IDeviceService devices, ISafetyPolicy safety, 
         var decision = safety.Evaluate(current, enabled ? DeviceAction.Enable : DeviceAction.Disable);
         if (!decision.Allowed) return ToggleResult.Fail(decision.Reason ?? "Not allowed.");
 
-        // Only touch nodes that are not already in the wanted state.
-        var targets = ToggleTargets.Select(current).Where(n => n.IsDisabled == enabled).ToList();
+        // Only touch nodes that are not already in the wanted state. Companion interfaces (for example the vendor
+        // WinUSB "Bulk" interface that keeps the light on) are part of the plan but are best-effort: the HID-level
+        // nodes decide whether the toggle worked, so a stubborn companion never undoes a disable that stopped the input.
+        var steps = ToggleTargets.Plan(current, enabled).Where(s => s.Node.IsDisabled == enabled).ToList();
         var changed = new List<(string InstanceId, uint DevInst)>();
+        var changedPrimary = new List<(string InstanceId, uint DevInst)>();
+        var companionProblems = new List<string>();
 
-        // A node already flagged "needs restart" cannot be switched until Windows restarts (pnputil refuses too).
-        foreach (var node in targets)
+        // A node flagged "needs restart" is not a hard stop: with the X-56 vendor driver a disable sets the flag, and
+        // Device Manager could still enable the node live. So log it and try anyway; the flag is only mentioned if
+        // the attempt fails (see ToggleFailureText). Refusing up front also left a flagged stick impossible to toggle.
+        var flagged = new List<string>();
+        foreach (var step in steps)
         {
-            if (Locate(node.InstanceId) is { } devInst && (DeviceEnumerator.GetStatus(devInst).Status & DnNeedRestart) != 0)
-                return ToggleResult.Fail($"Windows has a restart pending for '{node.Name}' ({node.InstanceId}). Restart Windows, close programs that use the controller (Steam, joy.cpl), then try again.");
+            if (Locate(step.Node.InstanceId) is { } devInst && (DeviceEnumerator.GetStatus(devInst).Status & DnNeedRestart) != 0)
+            {
+                Log.Warning("{Id} is flagged DN_NEED_RESTART before the change; trying anyway", step.Node.InstanceId);
+                flagged.Add(step.Node.Name);
+            }
         }
 
-        foreach (var node in targets)
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var step in steps)
         {
             ct.ThrowIfCancellationRequested();
+            var node = step.Node;
+            var before = started.Elapsed;
             var (devInst, error) = ChangeStateWithFallback(node.InstanceId, enabled);
-            if (error is not null)
+            Log.Information("Step {Kind} {Id}: {Result} in {Ms} ms", step.IsCompanion ? "companion" : "node", node.InstanceId,
+                error is null ? "ok" : "failed", (int)(started.Elapsed - before).TotalMilliseconds);
+
+            if (error is null)
             {
-                // Disabling is all-or-nothing: put back what we already switched off.
-                Log.Warning("Change of {Id} failed ({Error}); rolling back {Count} node(s)", node.InstanceId, error, changed.Count);
-                if (!enabled)
-                    foreach (var done in changed) ChangeStateWithFallback(done.InstanceId, true);
-                return ToggleResult.Fail($"{(enabled ? "Enabling" : "Disabling")} '{node.Name}' failed: {error}");
+                changed.Add((node.InstanceId, devInst));
+                if (!step.IsCompanion) changedPrimary.Add((node.InstanceId, devInst));
+                continue;
             }
-            changed.Add((node.InstanceId, devInst));
+
+            if (step.IsCompanion)
+            {
+                Log.Warning("Companion {Id} could not be {Verb}d ({Error}); continuing", node.InstanceId, enabled ? "enable" : "disable", error);
+                companionProblems.Add(node.Name);
+                continue;
+            }
+
+            // Disabling is all-or-nothing: put back what we already switched off.
+            Log.Warning("Change of {Id} failed ({Error}); rolling back {Count} node(s)", node.InstanceId, error, changed.Count);
+            if (!enabled)
+                foreach (var done in changed) ChangeStateWithFallback(done.InstanceId, true);
+            return ToggleResult.Fail(ToggleFailureText.WithRestartHint($"{(enabled ? "Enabling" : "Disabling")} '{node.Name}' failed: {error}", flagged));
         }
 
-        if (!WaitForState(changed, disabled: !enabled, out var timeline))
+        if (!WaitForState(changedPrimary, disabled: !enabled, out var timeline))
         {
             if (!enabled)
                 foreach (var done in changed) ChangeStateWithFallback(done.InstanceId, true);
             Log.Warning("Verification failed for {Name}: {Timeline}", current.Name, timeline);
-            return ToggleResult.Fail($"Windows accepted the change, but the device did not switch state (a restart or another program may be holding it). Status timeline: {timeline}");
+            return ToggleResult.Fail(ToggleFailureText.WithRestartHint($"Windows accepted the change, but the device did not switch state (a restart or another program may be holding it). Status timeline: {timeline}", flagged));
         }
 
         try
@@ -143,38 +169,70 @@ public sealed class DeviceToggler(IDeviceService devices, ISafetyPolicy safety, 
     }
 
     /// <summary>
-    /// Disable uses the hardware-profile scope first (what devcon does) and falls back to global scope.
-    /// Enable clears both. A failed call still counts as success when the node ended up in the wanted state.
+    /// Switches one node and verifies the result. A failed call still counts as success when the node ended up in
+    /// the wanted state.
     /// </summary>
-    private static (uint DevInst, string? Error) ChangeStateWithFallback(string instanceId, bool enable)
-    {
-        SETUP_DI_PROPERTY_CHANGE_SCOPE[] scopes = enable
-            ? [SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_GLOBAL, SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_CONFIGSPECIFIC]
-            : [SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_CONFIGSPECIFIC, SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_GLOBAL];
+    private static (uint DevInst, string? Error) ChangeStateWithFallback(string instanceId, bool enable) =>
+        enable ? EnableBothScopes(instanceId) : DisableWithFallback(instanceId);
 
+    /// <summary>
+    /// A node can carry a global and a hardware-profile "disabled" flag, and an enable at one scope clears only that
+    /// scope's flag (on the X-56 a single-scope enable reported OK and changed nothing, costing 1.5 s per node before
+    /// the other scope was tried). So both scopes are issued back to back and the state is verified once.
+    /// </summary>
+    private static (uint DevInst, string? Error) EnableBothScopes(string instanceId)
+    {
         uint devInst = 0;
         var errors = new List<string>();
-        foreach (var scope in scopes)
+        foreach (var scope in new[] { SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_GLOBAL, SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_CONFIGSPECIFIC })
         {
-            var (inst, error) = ChangeState(instanceId, enable, scope);
-            Log.Information("SetupAPI {Verb} {Id} scope={Scope}: {Result}", enable ? "enable" : "disable", instanceId, scope, error ?? "ok");
+            var (inst, error) = ChangeState(instanceId, enable: true, scope);
+            Log.Information("SetupAPI enable {Id} scope={Scope}: {Result}", instanceId, scope, error ?? "ok");
+            if (inst != 0) devInst = inst;
+            if (error is not null) errors.Add(error);
+        }
+
+        if (devInst != 0 && WaitForState([(instanceId, devInst)], disabled: false, out var seen, ScopeVerifyTimeout)) return (devInst, null);
+        errors.Add($"state unchanged after both scopes ({(devInst == 0 ? "node not found" : "see log")})");
+        return (devInst, string.Join(" / ", errors));
+    }
+
+    /// <summary>
+    /// Disable uses the hardware-profile scope first (what devcon does) and falls back to global scope. Orderings
+    /// were compared on the X-56 (issue #7): bulk-first and global-first gave no gain, so this stays the default.
+    /// </summary>
+    private static (uint DevInst, string? Error) DisableWithFallback(string instanceId)
+    {
+        uint devInst = 0;
+        var errors = new List<string>();
+        foreach (var scope in new[] { SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_CONFIGSPECIFIC, SETUP_DI_PROPERTY_CHANGE_SCOPE.DICS_FLAG_GLOBAL })
+        {
+            var (inst, error) = ChangeState(instanceId, enable: false, scope);
+            Log.Information("SetupAPI disable {Id} scope={Scope}: {Result}", instanceId, scope, error ?? "ok");
             if (inst != 0) devInst = inst;
             if (error is null)
             {
-                // A reported success is not enough: some scopes return OK without changing anything.
-                if (WaitForState([(instanceId, devInst)], disabled: !enable, out var seen, ScopeVerifyTimeout)) return (devInst, null);
+                // A reported success is not enough: some scopes return OK without changing anything. When the node
+                // already shows "restart needed" and is not disabled, waiting longer does not help (the X-56 logs showed
+                // the state never changing, then the next scope worked at once), so check once and move on.
+                var stuck = devInst != 0 && !DeviceEnumerator.IsDisabled(devInst)
+                            && (DeviceEnumerator.GetStatus(devInst).Status & DnNeedRestart) != 0;
+                if (WaitForState([(instanceId, devInst)], disabled: true, out var seen, stuck ? TimeSpan.Zero : ScopeVerifyTimeout)) return (devInst, null);
                 Log.Warning("Scope {Scope} reported OK for {Id} but the state did not change: {Timeline}", scope, instanceId, seen);
                 errors.Add($"{scope}: reported OK but state unchanged ({seen})");
                 continue;
             }
             errors.Add(error);
             // The installer can report an error after the state already changed.
-            if (devInst != 0 && DeviceEnumerator.IsDisabled(devInst) == !enable) return (devInst, null);
+            if (devInst != 0 && DeviceEnumerator.IsDisabled(devInst)) return (devInst, null);
         }
         return (devInst, string.Join(" / ", errors));
     }
 
-    /// <summary>Returns the devnode handle on success, or an error message.</summary>
+    /// <summary>
+    /// Returns the devnode handle on success, or an error message. HID-class nodes are found in the HID device set
+    /// (the proven path); any other node, such as a vendor WinUSB interface, is opened directly by instance id.
+    /// </summary>
     private static unsafe (uint DevInst, string? Error) ChangeState(string instanceId, bool enable, SETUP_DI_PROPERTY_CHANGE_SCOPE scope, bool dryRun = false)
     {
         var classGuid = DeviceEnumerator.HidClassGuid;
@@ -189,30 +247,49 @@ public sealed class DeviceToggler(IDeviceService devices, ISafetyPolicy safety, 
 
             var id = DeviceEnumerator.GetInstanceId(set, ref data);
             if (!string.Equals(id, instanceId, StringComparison.OrdinalIgnoreCase)) continue;
-
-            var parameters = new SP_PROPCHANGE_PARAMS
-            {
-                ClassInstallHeader = new SP_CLASSINSTALL_HEADER
-                {
-                    cbSize = (uint)sizeof(SP_CLASSINSTALL_HEADER),
-                    InstallFunction = DI_FUNCTION.DIF_PROPERTYCHANGE,
-                },
-                StateChange = enable ? SETUP_DI_STATE_CHANGE.DICS_ENABLE : SETUP_DI_STATE_CHANGE.DICS_DISABLE,
-                Scope = scope,
-                HwProfile = 0,
-            };
-
-            var hdev = new HDEVINFO(set.DangerousGetHandle());
-            if (!PInvoke.SetupDiSetClassInstallParams(hdev, &data, &parameters.ClassInstallHeader, (uint)sizeof(SP_PROPCHANGE_PARAMS)))
-                return (0, $"SetupDiSetClassInstallParams (size {sizeof(SP_PROPCHANGE_PARAMS)}, devinfo {data.cbSize}): " + Describe(Marshal.GetLastPInvokeError()));
-            if (dryRun) return (data.DevInst, null);
-            if (!PInvoke.SetupDiCallClassInstaller(DI_FUNCTION.DIF_PROPERTYCHANGE, hdev, &data))
-                return (data.DevInst, $"SetupDiCallClassInstaller ({scope}): " + Describe(Marshal.GetLastPInvokeError()));
-
-            return (data.DevInst, null);
+            return ApplyPropertyChange(set, ref data, enable, scope, dryRun);
         }
 
-        return (0, "device node not found.");
+        return ChangeStateById(instanceId, enable, scope, dryRun);
+    }
+
+    private static unsafe (uint DevInst, string? Error) ChangeStateById(string instanceId, bool enable, SETUP_DI_PROPERTY_CHANGE_SCOPE scope, bool dryRun)
+    {
+        Guid? noClass = null;
+        using var set = PInvoke.SetupDiCreateDeviceInfoList(noClass, default(Windows.Win32.Foundation.HWND));
+        if (set.IsInvalid) return (0, "SetupDiCreateDeviceInfoList: " + Describe(Marshal.GetLastPInvokeError()));
+
+        var data = new SP_DEVINFO_DATA { cbSize = (uint)sizeof(SP_DEVINFO_DATA) };
+        if (!PInvoke.SetupDiOpenDeviceInfo(set, instanceId, default, 0, ref data))
+            return (0, "device node not found (" + Describe(Marshal.GetLastPInvokeError()) + ").");
+        return ApplyPropertyChange(set, ref data, enable, scope, dryRun);
+    }
+
+    private static unsafe (uint DevInst, string? Error) ApplyPropertyChange(
+        SetupDiDestroyDeviceInfoListSafeHandle set, ref SP_DEVINFO_DATA data, bool enable, SETUP_DI_PROPERTY_CHANGE_SCOPE scope, bool dryRun)
+    {
+        var parameters = new SP_PROPCHANGE_PARAMS
+        {
+            ClassInstallHeader = new SP_CLASSINSTALL_HEADER
+            {
+                cbSize = (uint)sizeof(SP_CLASSINSTALL_HEADER),
+                InstallFunction = DI_FUNCTION.DIF_PROPERTYCHANGE,
+            },
+            StateChange = enable ? SETUP_DI_STATE_CHANGE.DICS_ENABLE : SETUP_DI_STATE_CHANGE.DICS_DISABLE,
+            Scope = scope,
+            HwProfile = 0,
+        };
+
+        var hdev = new HDEVINFO(set.DangerousGetHandle());
+        fixed (SP_DEVINFO_DATA* d = &data)
+        {
+            if (!PInvoke.SetupDiSetClassInstallParams(hdev, d, &parameters.ClassInstallHeader, (uint)sizeof(SP_PROPCHANGE_PARAMS)))
+                return (0, $"SetupDiSetClassInstallParams (size {sizeof(SP_PROPCHANGE_PARAMS)}, devinfo {d->cbSize}): " + Describe(Marshal.GetLastPInvokeError()));
+            if (dryRun) return (d->DevInst, null);
+            if (!PInvoke.SetupDiCallClassInstaller(DI_FUNCTION.DIF_PROPERTYCHANGE, hdev, d))
+                return (d->DevInst, $"SetupDiCallClassInstaller ({scope}): " + Describe(Marshal.GetLastPInvokeError()));
+            return (d->DevInst, null);
+        }
     }
 
     private static unsafe uint? Locate(string instanceId)
