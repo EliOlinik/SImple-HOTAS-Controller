@@ -17,6 +17,8 @@ foreach (var n in nodes.OrderBy(n => n.PhysicalDeviceInstanceId).ThenBy(n => n.I
 
 var store = new HotasController.Core.State.DisabledStateStore(HotasController.Core.State.DisabledStateStore.DefaultPath);
 var controllers = GameControllerGrouper.Group(nodes, store.Load().Select(r => r.PhysicalDeviceInstanceId).ToHashSet(StringComparer.OrdinalIgnoreCase));
+if (store.LoadProblem is { } storeProblem)
+    Console.WriteLine($"\nWARNING: {storeProblem}\n(The data folder is limited to administrators; run this from an elevated terminal to read it.)");
 Console.WriteLine();
 Console.WriteLine($"== Game controllers ({controllers.Count}) ==");
 foreach (var c in controllers)

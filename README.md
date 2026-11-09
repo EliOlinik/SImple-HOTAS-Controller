@@ -20,7 +20,7 @@ I have twitchy pots on some of my controllers, which causes several issues while
 A preset is a named set of controller states, for example "Racing" with the HOTAS off and the wheel on.
 
 - The dropdown always starts with **&lt;Default&gt;**, which is selected when the app starts. It is a built-in, read-only placeholder that shows the live state of your controllers. It cannot be applied, updated, deleted or used as a preset name, and it is not stored in `presets.json`. Deleting the selected preset switches back to it.
-- **Create** asks for a name and saves the current state of every plugged-in controller under it. Names must be unique, and at least one controller must be plugged in.
+- **Create** asks for a name and saves the current state of every plugged-in controller under it. Names must be unique (up to 60 characters), at least one controller must be plugged in, and you can keep at most 100 presets.
 - Pick a preset in the dropdown and press **Apply** to switch the controllers to the saved states. Controllers that are not in the preset are left alone, and the status bar reports how many were changed, already correct, unplugged or failed. Selecting a preset only previews it; nothing changes until you press **Apply**. The preview is a summary line below the preset controls (for example "Apply will: enable 1, disable 2 · 1 already correct · 1 unplugged") and an **After apply** column that says what will happen to each row: **→ Enable** or **→ Disable** (shown in bold), No change, Not in preset, or Skipped (unplugged). When there is nothing to change, **Apply** is greyed out.
 - **Update** overwrites the selected preset with the current states, after asking you to confirm. It also adds controllers that are new and keeps the entries for controllers that are unplugged.
 - **Delete** removes the selected preset, after asking you to confirm.
@@ -76,6 +76,17 @@ Everything is stored in `%ProgramData%\HotasController\`:
 - `logs\`: daily log files, with the last 14 days kept.
 
 No data leaves your machine.
+
+### How the data is protected
+
+The app runs with administrator rights, so it treats these files with care:
+
+- **The folder is locked down.** On start the app limits `%ProgramData%\HotasController\` to Administrators and SYSTEM. If the folder is owned by someone else, or is or contains a link (a symbolic link or junction), the app refuses to start and tells you how to fix it: delete or rename the folder as an administrator. Links are checked for because they could redirect a write made with administrator rights to another place.
+- **The files have limits.** At most 100 presets, 1000 devices per preset, 1000 devices in `disabled-devices.json`, 4 MB per file, and short names. A file that breaks a limit, is damaged, is not valid text, or lists the same preset or device twice is ignored as a whole rather than partly used.
+- **You are told.** When a file is ignored, a warning stays visible at the bottom of the window with the reason. A damaged file is copied next to itself as `.corrupt` first (not for a file that is too large or is a link). Saving a preset afterwards replaces the ignored file.
+- **Writes are safe.** Files are written to a temporary file and moved into place, and the app refuses to write through a link.
+
+Because the folder is limited to administrators, tools that read these files, such as `tools/HotasController.Dump`, need an elevated terminal to see the saved state.
 
 ## License
 

@@ -28,6 +28,11 @@
                 <TextBlock x:Name="StatusText" Text="{Binding StatusMessage}"/>
             </StatusBarItem>
         </StatusBar>
+        <!-- Stays visible while a saved data file had to be ignored (damaged, too large, over the limits, a link). -->
+        <Border DockPanel.Dock="Bottom" Background="#FFF3CD" BorderBrush="#E0C36A" BorderThickness="0,1,0,0" Padding="12,6"
+                Visibility="{Binding HasDataWarning, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Text="{Binding DataWarning}" Foreground="#5C4400" TextWrapping="Wrap"/>
+        </Border>
         <Grid Margin="12">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>

@@ -1,4 +1,5 @@
 using HotasController.Core.Models;
+using HotasController.Core.Storage;
 
 namespace HotasController.Core.Presets;
 
@@ -146,7 +147,8 @@ public static class PresetPlanner
     }
 
     private static PresetEntry ToEntry(GameController c) =>
-        new(c.PhysicalDeviceInstanceId, c.Name, c.VendorId, c.ProductId, c.IsEnabled);
+        new(c.PhysicalDeviceInstanceId, DataFileLimits.CleanName(c.Name, DataFileLimits.MaxDeviceNameLength),
+            c.VendorId, c.ProductId, c.IsEnabled);
 
     private static bool SameBus(string a, string b) =>
         string.Equals(InstanceIdParser.GetBus(a), InstanceIdParser.GetBus(b), StringComparison.OrdinalIgnoreCase);

@@ -1,13 +1,18 @@
 using System.Text.Json;
+using HotasController.Core.Storage;
 
 namespace HotasController.Core.State;
 
-/// <summary>JSON-file backed <see cref="IDisabledStateStore"/>. Thread-safe within a process.</summary>
+/// <summary>
+/// JSON-file backed <see cref="IDisabledStateStore"/>. Thread-safe within a process.
+/// A file that is damaged, too large, over the limits or a link is ignored (and reported through <see cref="LoadProblem"/>).
+/// </summary>
 public sealed class DisabledStateStore : IDisabledStateStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly object _gate = new();
     private readonly string _path;
+    private volatile string? _loadProblem;
 
     public DisabledStateStore(string path)
     {
@@ -15,9 +20,9 @@ public sealed class DisabledStateStore : IDisabledStateStore
         _path = path;
     }
 
-    public static string DefaultPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "HotasController", "disabled-devices.json");
+    public static string DefaultPath { get; } = Path.Combine(DataFolderPolicy.DefaultPath, "disabled-devices.json");
+
+    public string? LoadProblem => _loadProblem;
 
     public IReadOnlyList<DisabledRecord> Load()
     {
@@ -27,11 +32,21 @@ public sealed class DisabledStateStore : IDisabledStateStore
     public void Add(DisabledRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
+        if (string.IsNullOrWhiteSpace(record.PhysicalDeviceInstanceId) ||
+            record.PhysicalDeviceInstanceId.Length > DataFileLimits.MaxInstanceIdLength)
+            throw new ArgumentException("The device id is empty or too long.", nameof(record));
+
+        var clean = record with { Name = DataFileLimits.CleanName(record.Name, DataFileLimits.MaxDeviceNameLength) };
         lock (_gate)
         {
             var list = ReadUnlocked().ToList();
-            list.RemoveAll(r => Same(r.PhysicalDeviceInstanceId, record.PhysicalDeviceInstanceId));
-            list.Add(record);
+            list.RemoveAll(r => Same(r.PhysicalDeviceInstanceId, clean.PhysicalDeviceInstanceId));
+            list.Add(clean);
+
+            // Keep what we write loadable: drop the oldest records beyond the limit.
+            while (list.Count > DataFileLimits.MaxDevices)
+                list.Remove(list.OrderBy(r => r.DisabledAtUtc).First());
+
             WriteUnlocked(list);
         }
     }
@@ -55,46 +70,45 @@ public sealed class DisabledStateStore : IDisabledStateStore
 
     private List<DisabledRecord> ReadUnlocked()
     {
-        string json;
-        try
+        var json = SafeJsonFile.TryRead(_path, out var problem);
+        if (problem is not null)
         {
-            if (!File.Exists(_path)) return new();
-            json = File.ReadAllText(_path);
-        }
-        catch (Exception)
-        {
+            _loadProblem = Describe(problem, backedUp: false);
             return new();
         }
 
-        if (string.IsNullOrWhiteSpace(json)) return new();
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            _loadProblem = null;
+            return new();
+        }
 
+        List<DisabledRecord?>? items = null;
         try
         {
-            var items = JsonSerializer.Deserialize<List<DisabledRecord>>(json, JsonOptions);
-            if (items is null || items.Any(i => i is null || i.PhysicalDeviceInstanceId is null))
-                throw new JsonException("invalid content");
-            return items;
+            items = JsonSerializer.Deserialize<List<DisabledRecord?>>(json, JsonOptions);
+            problem = DataFileValidator.ValidateDisabledRecords(items);
         }
         catch (JsonException)
         {
-            try { File.Copy(_path, _path + ".corrupt", overwrite: true); } catch { /* best effort */ }
-            return new();
+            problem = "it is not valid JSON of the expected shape";
         }
+
+        if (problem is null)
+        {
+            _loadProblem = null;
+            return items!.Select(i => i!).ToList();
+        }
+
+        _loadProblem = Describe(problem, SafeJsonFile.TryBackup(_path));
+        return new();
     }
 
-    private void WriteUnlocked(List<DisabledRecord> items)
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(_path))!;
-        Directory.CreateDirectory(dir);
-        var tmp = Path.Combine(dir, Path.GetFileName(_path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-        try
-        {
-            File.WriteAllText(tmp, JsonSerializer.Serialize(items, JsonOptions));
-            File.Move(tmp, _path, overwrite: true);
-        }
-        finally
-        {
-            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* best effort */ }
-        }
-    }
+    private string Describe(string problem, bool backedUp) =>
+        $"The list of disabled devices ({Path.GetFileName(_path)}) was ignored: {problem}. " +
+        "Controllers this app disabled may not be listed; re-enable them in Device Manager if needed." +
+        (backedUp ? $" A copy was kept as {Path.GetFileName(_path)}.corrupt." : "");
+
+    private void WriteUnlocked(List<DisabledRecord> items) =>
+        SafeJsonFile.WriteAtomic(_path, JsonSerializer.Serialize(items, JsonOptions));
 }
