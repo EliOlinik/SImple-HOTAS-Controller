@@ -4,6 +4,7 @@ using HotasController.Core;
 using HotasController.Core.Models;
 using Microsoft.Win32;
 using Serilog;
+using Windows.Win32;
 
 namespace HotasController.Win32;
 
@@ -20,6 +21,7 @@ public static class BlockerLookup
     public static IReadOnlyList<ToggleBlocker> Find(IReadOnlyCollection<string> deviceInstanceIds, DateTime since)
     {
         var found = new List<ToggleBlocker>();
+        var volumes = new Lazy<Dictionary<string, string>>(VolumeMap);
         try
         {
             var from = since.ToUniversalTime().AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
@@ -36,7 +38,7 @@ public static class BlockerLookup
                     if (device is null || !deviceInstanceIds.Contains(device, StringComparer.OrdinalIgnoreCase)) continue;
                     var image = e.Properties[2].Value as string ?? "";
                     if (image.Length == 0) continue;
-                    found.Add(new ToggleBlocker(Convert.ToInt32(e.Properties[0].Value), image));
+                    found.Add(new ToggleBlocker(Convert.ToInt32(e.Properties[0].Value), ToggleBlockers.ToDosPath(image, volumes.Value)));
                 }
             }
         }
@@ -48,6 +50,22 @@ public static class BlockerLookup
         }
 
         return ToggleBlockers.Relevant(found).Select(b => b with { ServiceName = FindServiceName(b.ImagePath) }).ToList();
+    }
+
+    /// <summary>Maps NT volume names (\Device\HarddiskVolume3) to drive letters (C:).</summary>
+    private static Dictionary<string, string> VolumeMap()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var buffer = new char[1024];
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            var letter = drive.Name.TrimEnd('\\');
+            var length = PInvoke.QueryDosDevice(letter, buffer.AsSpan());
+            if (length == 0) continue;
+            var target = new string(buffer, 0, (int)length).Split('\0')[0];
+            if (target.Length > 0) map[target] = letter;
+        }
+        return map;
     }
 
     /// <summary>The service whose executable is <paramref name="imagePath"/>, if it is a third-party own-process service.</summary>

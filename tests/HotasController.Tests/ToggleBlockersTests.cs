@@ -31,6 +31,19 @@ public class ToggleBlockersTests
         Assert.Equal(expected, ToggleBlockers.IsStoppableImage(path, @"C:\Windows"));
 
     [Fact]
+    public void ToDosPath_ConvertsNtVolumePaths_AndLeavesOthersAlone()
+    {
+        var map = new Dictionary<string, string> { [@"\Device\HarddiskVolume3"] = "C:", [@"\Device\HarddiskVolume30"] = "D:" };
+        Assert.Equal(@"C:\Windows\System32\rundll32.exe", ToggleBlockers.ToDosPath(@"\Device\HarddiskVolume3\Windows\System32\rundll32.exe", map));
+        Assert.Equal(@"D:\x.exe", ToggleBlockers.ToDosPath(@"\Device\HarddiskVolume30\x.exe", map));
+        Assert.Equal(@"\Device\Unknown\x.exe", ToggleBlockers.ToDosPath(@"\Device\Unknown\x.exe", map));
+    }
+
+    [Fact]
+    public void IsStoppableImage_RefusesUnconvertedNtPaths() =>
+        Assert.False(ToggleBlockers.IsStoppableImage(@"\Device\HarddiskVolume3\Windows\System32\svchost.exe", @"C:\Windows"));
+
+    [Fact]
     public void StoppableServices_ListsEachServiceOnce()
     {
         var list = ToggleBlockers.StoppableServices([

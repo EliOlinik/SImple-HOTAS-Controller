@@ -19,8 +19,23 @@ public static class ToggleBlockers
     public static bool IsStoppableImage(string imagePath, string windowsDirectory)
     {
         if (string.IsNullOrWhiteSpace(imagePath) || string.IsNullOrWhiteSpace(windowsDirectory)) return false;
+        // Fail closed: a path that is not a drive-letter path (for example an unconverted \Device\... one) cannot be
+        // compared with the Windows folder, so it is never treated as stoppable.
+        if (imagePath.Length < 3 || !char.IsAsciiLetter(imagePath[0]) || imagePath[1] != ':') return false;
         var root = windowsDirectory.TrimEnd('\\', '/') + "\\";
         return !imagePath.Replace('/', '\\').StartsWith(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Kernel-PnP logs image paths in NT form (<c>\Device\HarddiskVolume3\Windows\x.exe</c>). Converts one to a
+    /// drive-letter path using the volume-to-drive map; returns the input unchanged when no volume matches.
+    /// </summary>
+    public static string ToDosPath(string path, IReadOnlyDictionary<string, string> deviceToDrive)
+    {
+        foreach (var (device, drive) in deviceToDrive)
+            if (path.StartsWith(device + "\\", StringComparison.OrdinalIgnoreCase))
+                return drive.TrimEnd('\\') + path[device.Length..];
+        return path;
     }
 
     public static IReadOnlyList<string> StoppableServices(IEnumerable<ToggleBlocker> blockers) =>

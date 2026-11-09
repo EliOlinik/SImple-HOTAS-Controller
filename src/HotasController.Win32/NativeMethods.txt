@@ -26,3 +26,4 @@ RmRegisterResources
 RmGetList
 SetupDiCreateDeviceInfoList
 SetupDiOpenDeviceInfo
+QueryDosDevice
