@@ -24,27 +24,49 @@ public sealed class DeviceToggler(IDeviceService devices, ISafetyPolicy safety, 
     private static readonly TimeSpan VerifyPoll = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan ScopeVerifyTimeout = TimeSpan.FromSeconds(1.5);
 
-    public Task<ToggleResult> SetEnabledAsync(GameController controller, bool enabled, CancellationToken cancellationToken = default) =>
-        Task.Run(() => Toggle(controller, enabled, cancellationToken), cancellationToken);
+    public Task<ToggleResult> SetEnabledAsync(GameController controller, bool enabled,
+        IReadOnlyList<string>? stopServices = null, CancellationToken cancellationToken = default) =>
+        Task.Run(() => Toggle(controller, enabled, stopServices ?? [], cancellationToken), cancellationToken);
 
-    private ToggleResult Toggle(GameController requested, bool enabled, CancellationToken ct)
+    private ToggleResult Toggle(GameController requested, bool enabled, IReadOnlyList<string> stopServices, CancellationToken ct)
     {
         var verb = enabled ? "enable" : "disable";
         Log.Information("Requested: {Verb} {Name} ({Id})", verb, requested.Name, requested.PhysicalDeviceInstanceId);
+
+        // Services the user agreed to stop (issue #7: a vendor service vetoes the device stop). They always come back.
+        var stopped = stopServices.Count > 0 ? BlockerLookup.StopServices(stopServices) : [];
+        var attemptStart = DateTime.UtcNow;
         try
         {
             var result = ToggleCore(requested, enabled, ct);
+            if (!result.Succeeded) result = WithBlockers(result, requested, enabled, attemptStart);
+            if (stopped.Count > 0)
+            {
+                var notRestarted = BlockerLookup.StartServices(stopped);
+                if (notRestarted.Count > 0)
+                    result = result with { Message = $"{result.Message} The service {string.Join(", ", notRestarted)} could not be started again; start it from Services (services.msc)." };
+            }
             if (result.Succeeded) Log.Information("Completed: {Verb} {Name}. {Message}", verb, requested.Name, result.Message);
             else Log.Warning("Failed: {Verb} {Name}: {Message}", verb, requested.Name, result.Message);
             return result;
         }
         catch (Exception ex)
         {
+            if (stopped.Count > 0) BlockerLookup.StartServices(stopped);
             Log.Error(ex, "Unexpected error while trying to {Verb} {Name}", verb, requested.Name);
             throw;
         }
     }
 
+    /// <summary>Names the processes Windows logged as refusing the stop, so the failure message and the app can act on them.</summary>
+    private static ToggleResult WithBlockers(ToggleResult result, GameController requested, bool enabled, DateTime since)
+    {
+        var ids = ToggleTargets.Plan(requested, enabled).Select(s => s.Node.InstanceId).ToList();
+        var blockers = BlockerLookup.Find(ids, since);
+        if (blockers.Count == 0) return result;
+        Log.Warning("Blocked by: {Blockers}", string.Join(", ", blockers.Select(b => $"{b.ImagePath} (pid {b.ProcessId}, service {b.ServiceName ?? "-"})")));
+        return result with { Message = $"{result.Message} {ToggleBlockers.Describe(blockers)}", Blockers = blockers };
+    }
     private ToggleResult ToggleCore(GameController requested, bool enabled, CancellationToken ct)
     {
         // The caller's snapshot may be stale; always decide on the current OS state.

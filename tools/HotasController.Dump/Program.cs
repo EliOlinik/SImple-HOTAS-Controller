@@ -119,6 +119,20 @@ if (args.Contains("--probe"))
             Console.WriteLine($"probe {n.InstanceId}: {DeviceToggler.Probe(n.InstanceId)}");
 }
 
+
+// Read-only: who vetoed stopping these controllers recently (Kernel-PnP event 225), and which service could be stopped.
+//   dotnet run --project tools/HotasController.Dump -- --blockers [minutes]
+if (args.Contains("--blockers"))
+{
+    var minutes = int.TryParse(args.SkipWhile(a => a != "--blockers").Skip(1).FirstOrDefault(), out var m) ? m : 60;
+    foreach (var c in controllers)
+    {
+        var ids = HotasController.Core.ToggleTargets.Plan(c, enable: false).Select(s => s.Node.InstanceId).ToList();
+        var found = BlockerLookup.Find(ids, DateTime.UtcNow.AddMinutes(-minutes));
+        Console.WriteLine($"{c.Name}: {(found.Count == 0 ? "no blockers in the last " + minutes + " min" : "")}");
+        foreach (var b in found) Console.WriteLine($"      {b.ProcessName} pid {b.ProcessId}  service={b.ServiceName ?? "-"}");
+    }
+}
 // --vid 0738 (repeatable): also snapshot USB devices of that vendor even when they are disabled and so not listed.
 static IEnumerable<string> VendorArgs(string[] args) =>
     args.Select((a, i) => (a, i)).Where(t => t.a == "--vid" && t.i + 1 < args.Length).Select(t => args[t.i + 1]);

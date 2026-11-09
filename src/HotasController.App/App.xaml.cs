@@ -123,7 +123,7 @@ public partial class App : Application
         if (useFakes)
         {
             var fakeDevices = new FakeDeviceService();
-            return new MainViewModel(fakeDevices, new FakeSafetyPolicy(), new FakeDeviceToggler(fakeDevices), confirm,
+            return new MainViewModel(fakeDevices, new FakeSafetyPolicy(), new BlockerAwareToggler(new FakeDeviceToggler(fakeDevices), confirm), confirm,
                 new InMemoryPresetStore(), prompt);
         }
 
@@ -131,7 +131,7 @@ public partial class App : Application
         var store = new DisabledStateStore(DisabledStateStore.DefaultPath);
         var devices = new DeviceService(store);
         var safety = new DeviceSafetyPolicy();
-        return new MainViewModel(devices, safety, new DeviceToggler(devices, safety, store), confirm,
+        return new MainViewModel(devices, safety, new BlockerAwareToggler(new DeviceToggler(devices, safety, store), confirm), confirm,
             new PresetStore(PresetStore.DefaultPath), prompt);
     }
 }
