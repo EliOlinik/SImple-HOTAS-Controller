@@ -8,6 +8,8 @@ public sealed class InMemoryPresetStore : IPresetStore
     private readonly object _gate = new();
     private readonly List<Preset> _presets = new();
 
+    public string? LoadProblem => null;
+
     public IReadOnlyList<Preset> Load()
     {
         lock (_gate) return _presets.ToList();

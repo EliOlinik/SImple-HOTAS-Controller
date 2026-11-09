@@ -1,13 +1,18 @@
 using System.Text.Json;
+using HotasController.Core.Storage;
 
 namespace HotasController.Core.Presets;
 
-/// <summary>JSON-file backed <see cref="IPresetStore"/>. Thread-safe within a process.</summary>
+/// <summary>
+/// JSON-file backed <see cref="IPresetStore"/>. Thread-safe within a process.
+/// A file that is damaged, too large, over the limits or a link is ignored (and reported through <see cref="LoadProblem"/>).
+/// </summary>
 public sealed class PresetStore : IPresetStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly object _gate = new();
     private readonly string _path;
+    private volatile string? _loadProblem;
 
     public PresetStore(string path)
     {
@@ -15,9 +20,9 @@ public sealed class PresetStore : IPresetStore
         _path = path;
     }
 
-    public static string DefaultPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "HotasController", "presets.json");
+    public static string DefaultPath { get; } = Path.Combine(DataFolderPolicy.DefaultPath, "presets.json");
+
+    public string? LoadProblem => _loadProblem;
 
     public IReadOnlyList<Preset> Load()
     {
@@ -32,6 +37,10 @@ public sealed class PresetStore : IPresetStore
             var list = ReadUnlocked().ToList();
             list.RemoveAll(p => SameName(p.Name, preset.Name));
             list.Add(preset);
+
+            var problem = DataFileValidator.ValidatePresets(list);
+            if (problem is not null) throw new InvalidOperationException(problem); // reads on after "Could not save the preset: "
+
             WriteUnlocked(list);
         }
     }
@@ -50,47 +59,45 @@ public sealed class PresetStore : IPresetStore
 
     private List<Preset> ReadUnlocked()
     {
-        string json;
-        try
+        var json = SafeJsonFile.TryRead(_path, out var problem);
+        if (problem is not null)
         {
-            if (!File.Exists(_path)) return new();
-            json = File.ReadAllText(_path);
-        }
-        catch (Exception)
-        {
+            _loadProblem = Describe(problem, backedUp: false);
             return new();
         }
 
-        if (string.IsNullOrWhiteSpace(json)) return new();
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            _loadProblem = null;
+            return new();
+        }
 
+        List<Preset?>? items = null;
         try
         {
-            var items = JsonSerializer.Deserialize<List<Preset>>(json, JsonOptions);
-            if (items is null || items.Any(p => p is null || string.IsNullOrWhiteSpace(p.Name) || p.Entries is null ||
-                                                p.Entries.Any(e => e is null || e.PhysicalDeviceInstanceId is null)))
-                throw new JsonException("invalid content");
-            return items;
+            items = JsonSerializer.Deserialize<List<Preset?>>(json, JsonOptions);
+            problem = DataFileValidator.ValidatePresets(items);
         }
         catch (JsonException)
         {
-            try { File.Copy(_path, _path + ".corrupt", overwrite: true); } catch { /* best effort */ }
-            return new();
+            problem = "it is not valid JSON of the expected shape";
         }
+
+        if (problem is null)
+        {
+            _loadProblem = null;
+            return items!.Select(i => i!).ToList();
+        }
+
+        _loadProblem = Describe(problem, SafeJsonFile.TryBackup(_path));
+        return new();
     }
 
-    private void WriteUnlocked(List<Preset> items)
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(_path))!;
-        Directory.CreateDirectory(dir);
-        var tmp = Path.Combine(dir, Path.GetFileName(_path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-        try
-        {
-            File.WriteAllText(tmp, JsonSerializer.Serialize(items, JsonOptions));
-            File.Move(tmp, _path, overwrite: true);
-        }
-        finally
-        {
-            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* best effort */ }
-        }
-    }
+    private string Describe(string problem, bool backedUp) =>
+        $"Your saved presets ({Path.GetFileName(_path)}) were ignored: {problem}. " +
+        "Saving a preset will replace the file." +
+        (backedUp ? $" A copy was kept as {Path.GetFileName(_path)}.corrupt." : "");
+
+    private void WriteUnlocked(List<Preset> items) =>
+        SafeJsonFile.WriteAtomic(_path, JsonSerializer.Serialize(items, JsonOptions));
 }

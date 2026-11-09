@@ -14,6 +14,8 @@ public sealed class DeviceService(IHidNodeSource nodes, IDisabledStateStore? sto
 {
     public DeviceService(IDisabledStateStore? store = null) : this(new DeviceEnumerator(), store) { }
 
+    public string? DataProblem => store?.LoadProblem;
+
     public IReadOnlyList<GameController> GetGameControllers()
     {
         var all = nodes.EnumerateHidNodes();

@@ -7,6 +7,7 @@ using HotasController.App.ViewModels;
 using HotasController.Core.Presets;
 using HotasController.Core.Safety;
 using HotasController.Core.State;
+using HotasController.Core.Storage;
 using HotasController.Win32;
 using Serilog;
 
@@ -20,6 +21,26 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Before logging (which would otherwise create the folder with default permissions): the app runs elevated,
+        // so the folder it writes to must be locked down and must not belong to someone else.
+        try
+        {
+            DataFolder.Prepare(DataFolderPolicy.DefaultPath);
+        }
+        catch (DataFolderException ex)
+        {
+            MessageBox.Show(ex.Message, "HOTAS Controller", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+            return;
+        }
+        catch (Exception ex)
+        {
+            ShowError("The app's data folder could not be prepared.", ex);
+            Shutdown(1);
+            return;
+        }
+
         ConfigureLogging();
 
         var useFakes = e.Args.Contains("--fake", StringComparer.OrdinalIgnoreCase);

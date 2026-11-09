@@ -6,6 +6,7 @@ using HotasController.Core.Abstractions;
 using HotasController.Core.Models;
 using HotasController.Core.Presets;
 using HotasController.Core.Safety;
+using HotasController.Core.Storage;
 
 namespace HotasController.App.ViewModels;
 
@@ -40,6 +41,19 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<string> PresetNames { get; } = new();
 
     public bool HasControllers => Controllers.Count > 0;
+
+    /// <summary>
+    /// Shown permanently (not just once) while a saved data file had to be ignored, so a damaged or tampered file is
+    /// never silently treated as "no data". Empty when all is well.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDataWarning))]
+    private string _dataWarning = "";
+
+    public bool HasDataWarning => DataWarning.Length > 0;
+
+    private void UpdateDataWarning() =>
+        DataWarning = string.Join("  ", new[] { _devices.DataProblem, _presetStore.LoadProblem }.Where(p => !string.IsNullOrEmpty(p)));
 
     /// <summary>True when at least one plugged-in controller is not (fully) enabled.</summary>
     public bool HasDisabledControllers => Controllers.Any(c => !c.IsUnplugged && !c.IsEnabled);
@@ -91,6 +105,7 @@ public partial class MainViewModel : ObservableObject
     public bool Reload()
     {
         _lastControllers = _devices.GetGameControllers();
+        UpdateDataWarning();
         var signature = string.Join("|", _lastControllers.Select(c => $"{c.PhysicalDeviceInstanceId}:{c.IsEnabled}:{c.IsFullyDisabled}"));
         var changed = signature != _lastSignature;
         _lastSignature = signature;
@@ -191,15 +206,22 @@ public partial class MainViewModel : ObservableObject
 
         SelectedPresetName = PresetNames.FirstOrDefault(n => string.Equals(n, keep, StringComparison.OrdinalIgnoreCase))
                              ?? PresetNaming.DefaultLabel;
+        UpdateDataWarning();
     }
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private void CreatePreset()
     {
+        if (_presets.Count >= DataFileLimits.MaxPresets)
+        {
+            StatusMessage = $"You have reached the limit of {DataFileLimits.MaxPresets} presets. Delete one first.";
+            return;
+        }
+
         var input = _prompt.PromptText("Create preset", "Name for the new preset (it records the current state of every plugged-in controller):");
         if (input is null) return;
 
-        var name = input.Trim();
+        var name = DataFileLimits.CleanName(input, DataFileLimits.MaxPresetNameLength).Trim();
         if (name.Length == 0)
         {
             StatusMessage = "A preset needs a name.";
