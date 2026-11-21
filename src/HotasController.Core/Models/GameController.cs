@@ -8,9 +8,20 @@ public sealed record GameController(
     ushort? ProductId,
     IReadOnlyList<HidNode> Nodes)
 {
-    /// <summary>True only when no node is disabled.</summary>
-    public bool IsEnabled => Nodes.All(n => !n.IsDisabled);
+    /// <summary>
+    /// Non-HID interfaces of the same USB device (for example a vendor WinUSB "Bulk" interface). Switching them
+    /// too is what makes a controller's light go out. They are not HID nodes, so they never decide whether the
+    /// device is a game controller.
+    /// </summary>
+    public IReadOnlyList<HidNode> CompanionNodes { get; init; } = [];
 
+    /// <summary>True only when no node, companions included, is disabled.</summary>
+    public bool IsEnabled => Nodes.All(n => !n.IsDisabled) && CompanionNodes.All(n => !n.IsDisabled);
+
+    /// <summary>
+    /// True when every HID node is disabled. Companions are left out on purpose: they are switched best-effort,
+    /// so one that refuses to stop must not leave a controller whose input is already off looking "partial".
+    /// </summary>
     public bool IsFullyDisabled => Nodes.All(n => n.IsDisabled);
 
     /// <summary>

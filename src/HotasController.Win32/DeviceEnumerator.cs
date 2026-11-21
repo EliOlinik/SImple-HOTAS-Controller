@@ -9,7 +9,7 @@ using Windows.Win32.Devices.Properties;
 namespace HotasController.Win32;
 
 /// <summary>Read-only enumeration of present HIDClass devnodes via SetupAPI / CfgMgr32.</summary>
-public sealed class DeviceEnumerator : IHidNodeSource
+public sealed class DeviceEnumerator : IHidNodeSource, ICompanionNodeSource
 {
     // Setup class GUID of HIDClass devnodes and interface GUID of HID device interfaces.
     internal static readonly Guid HidClassGuid = new("745a17a0-74d3-11d0-b6fe-00a0c90f57da");
@@ -62,6 +62,59 @@ public sealed class DeviceEnumerator : IHidNodeSource
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Direct <c>USB\...</c> interface children of the physical device that are not HID nodes of the controller,
+    /// for example the vendor's WinUSB bulk interface. Walks the devnode tree read-only; any class qualifies, so a
+    /// device is switched off completely (its light goes out). The device itself and non-USB buses are left alone.
+    /// </summary>
+    public IReadOnlyList<HidNode> GetCompanionNodes(string physicalDeviceInstanceId, IReadOnlySet<string> knownNodeIds)
+    {
+        var result = new List<HidNode>();
+        if (!physicalDeviceInstanceId.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase)) return result;
+        if (LocateNode(physicalDeviceInstanceId) is not { } parent) return result;
+        if (PInvoke.CM_Get_Child(out var child, parent, 0) != CrSuccess) return result;
+
+        for (var guard = 0; guard < 64; guard++)
+        {
+            var id = GetDeviceId(child);
+            if (id is not null
+                && id.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase)
+                && !knownNodeIds.Contains(id))
+            {
+                var hasVidPid = InstanceIdParser.TryGetVidPid(id, out var vid, out var pid);
+                result.Add(new HidNode(id, GetNodeName(child) ?? id, physicalDeviceInstanceId, null,
+                    hasVidPid ? vid : null, hasVidPid ? pid : null, IsDisabled(child), null));
+            }
+            if (PInvoke.CM_Get_Sibling(out var sibling, child, 0) != CrSuccess) break;
+            child = sibling;
+        }
+        return result;
+    }
+
+    private static unsafe uint? LocateNode(string instanceId)
+    {
+        fixed (char* id = instanceId)
+            return PInvoke.CM_Locate_DevNode(out var devInst, new PWSTR(id), 0) == CrSuccess ? devInst : null;
+    }
+
+    // DEVPKEY_Device_FriendlyName (pid 14) then DEVPKEY_Device_DeviceDesc (pid 2), both in the general device set.
+    private static readonly Guid DeviceProperties = new("a45c254e-df1c-4efd-8020-67d146a850e0");
+
+    private static string? GetNodeName(uint devInst)
+    {
+        var buffer = new byte[512];
+        foreach (var pid in new uint[] { 14, 2 })
+        {
+            var key = new DEVPROPKEY { fmtid = DeviceProperties, pid = pid };
+            DEVPROPTYPE type;
+            uint size = (uint)buffer.Length;
+            if (PInvoke.CM_Get_DevNode_Property(devInst, key, out type, buffer, ref size, 0) != CrSuccess) continue;
+            var text = System.Text.Encoding.Unicode.GetString(buffer[..(int)Math.Min(size, (uint)buffer.Length)]).TrimEnd('\0');
+            if (text.Length > 0) return text;
+        }
+        return null;
     }
 
     internal static unsafe string? GetInstanceId(SetupDiDestroyDeviceInfoListSafeHandle set, ref SP_DEVINFO_DATA data)
